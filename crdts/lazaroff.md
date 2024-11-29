@@ -180,7 +180,71 @@ The idempotence function ensures that merging a state with itself doesn’t chan
 If you have a specific merge logic, you can implement it within the merge method of your state class or as a standalone function passed into these tests.
 
 ## Existing CRDTs
-* Last Write Wins Register -> Possibly location data as is?
+
+### 1. Last Write Wins Register
+
+Note: Possibly location data as is?
+
+> LWW Registers, as the name suggests, simply overwrite their current value with the last value written. They determine which write occurred last using timestamps, represented here by integers that increment whenever the value is updated. Here’s the algorithm:
+
+> * If the received timestamp is less than the local timestamp, the register doesn’t change its state.
+> * If the received timestamp is greater than the local timestamp, the register overwrites its local value with the received value. It also stores the received timestamp and some sort of identifier unique to the peer that last wrote the value (the peer ID).
+> * Ties are broken by comparing the local peer ID to the peer ID in the received state.
+
+> You might ask: why not use the actual time? Unfortunately, accurately syncing clocks between two computers is an extremely hard problem. Using incrementing integers like this is one simple version of a logical clock, which captures the order of events relative to each other rather than to the “wall clock”.
+
+ChatGPT:
+
+> Below is an immutable Scala implementation of the given LWWRegister class. The class is designed to follow immutability principles, ensuring that state changes return new instances rather than modifying the existing object:
+
+NOTE: Not tested for compilation, would style it slightly differently but it's currently trying to be similar to the original.
+
+```
+case class LWWRegister[T](id: String, state: (String, Long, T)) {
+
+  // Getter for the value
+  def value: T = state._3
+
+  /**
+   * Creates a new LWWRegister with an updated state.
+   * The peer ID is set to the local ID, the timestamp is incremented by 1, and the value is updated.
+   */
+  def set(value: T): LWWRegister[T] = {
+    val (peer, timestamp, _) = state
+    copy(state = (id, timestamp + 1, value))
+  }
+
+  /**
+   * Merges the current state with the provided state.
+   * Returns a new LWWRegister with the merged state.
+   */
+  def merge(remoteState: (String, Long, T)): LWWRegister[T] = {
+    val (remotePeer, remoteTimestamp, remoteValue) = remoteState
+    val (localPeer, localTimestamp, localValue) = state
+
+    // Determine which state to keep based on timestamp and peer ID
+    if (localTimestamp > remoteTimestamp ||
+        (localTimestamp == remoteTimestamp && localPeer > remotePeer)) {
+      this // Keep the current state
+    } else {
+      copy(state = remoteState) // Overwrite with the remote state
+    }
+  }
+}
+```
+**Explanation:**
+
+* Immutability: \
+  The class is implemented as a Scala case class to provide immutability and boilerplate code for copy, equals, and hashCode.
+  Instead of modifying state directly, the set and merge methods return new instances of `LWWRegister` with updated state.
+* State Representation: \
+The state is represented as a tuple `(String, Long, T)` to match the structure `[peer: string, timestamp: number, value: T]`.
+* `set` Method: \
+Creates a new instance with the id as the peer, the timestamp incremented by 1, and the updated value.
+* `merge` Method: \
+Compares timestamps and peer IDs to determine whether to keep the local state or overwrite it with the remote state.
+Returns the current instance if the local state is preferred or a new instance with the remote state otherwise.
+
 * Last Write Wins Map
 * 
 
