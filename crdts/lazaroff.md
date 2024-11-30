@@ -245,6 +245,40 @@ Creates a new instance with the id as the peer, the timestamp incremented by 1, 
 Compares timestamps and peer IDs to determine whether to keep the local state or overwrite it with the remote state.
 Returns the current instance if the local state is preferred or a new instance with the remote state otherwise.
 
-* Last Write Wins Map
-* 
+### 2. Last Write Wins Map 
+> Do you see the trick? From our application’s perspective, the LWW Map just holds normal values — but it actually holds LWW Registers. When we look at the full state, each key’s state is the state of the LWW Register at that key 
+
+> Composition lets us combine primitive CRDTs into more complex ones. When it’s time to merge, all the parent does is pass slices of incoming state to the appropriate child’s merge function
+
+**ChatGPT:**
+> To translate the provided TypeScript type alias for an object with string keys and values of a generic type `T` into immutable Scala, you can use a `Map[String, T]`. Here's the equivalent definition:
+
+```
+type Value[T] = Map[String, T]
+```
+**Explanation:**
+> * Map in Scala:
+The Scala `Map` type represents an immutable collection of key-value pairs by default (unless explicitly using `mutable.Map`).
+> * The keys in `Map[String, T]` are strings, corresponding to the string keys in the TypeScript object.
+> * The values are of type `T`, making it generic and aligning with the original definition.
+
+> The TypeScript type definition for `State<T>` maps strings to the state property of an `LWWRegister` object, where the type of state is a tuple. Here's how you can represent this as an immutable type in Scala:
+
+> Assuming LWWRegister is defined with a state field of type (String, Long, T) in Scala, the equivalent would be:
+
+```
+type State[T] = Map[String, (String, Long, T)]
+```
+**Explanation:**
+> 1. Key as String:
+ Just like in the TypeScript version, the keys are strings, represented as `String` in Scala.
+> 2. Value as Tuple:
+The `state` field in `LWWRegister` is a tuple in Scala: `(String, Long, T)`. This aligns with the structure described in TypeScript.
+> 3. Generic Handling of T | null:
+In TypeScript, `T | null` allows the value type to be `T` or `null`. In Scala, `Option[T]` is idiomatic.
+If nullability needs to be supported, replace `T` in the tuple with `Option[T]` to account for this:
+```
+type State[T] = Map[String, (String, Long, Option[T])]
+```
+NOTE: Don't think we need nullability in the simplest case.
 
