@@ -250,6 +250,8 @@ Returns the current instance if the local state is preferred or a new instance w
 
 > Composition lets us combine primitive CRDTs into more complex ones. When it’s time to merge, all the parent does is pass slices of incoming state to the appropriate child’s merge function
 
+> LWW Map merge function is simple: iterate through each key and hand off the incoming state at that key to the corresponding LWW Register to merge.
+
 **ChatGPT:**
 > To translate the provided TypeScript type alias for an object with string keys and values of a generic type `T` into immutable Scala, you can use a `Map[String, T]`. Here's the equivalent definition:
 
@@ -281,4 +283,93 @@ If nullability needs to be supported, replace `T` in the tuple with `Option[T]` 
 type State[T] = Map[String, (String, Long, Option[T])]
 ```
 NOTE: Don't think we need nullability in the simplest case.
+NOTE: Actually, I was wrong. If peer deletes, delete.
 
+**ChatGPT**
+
+NOTE: I added comments based on the original article's explanations to the individual methods.
+
+```
+case class LWWMap[T](id: String, private val data: Map[String, LWWRegister[Option[T]]]) {
+
+  /**
+   * Constructs an `LWWMap` from an ID and an initial state.
+   */
+  def this(id: String, state: Map[String, (String, Long, Option[T])]) = {
+    this(
+      id,
+      state.map { case (key, register) =>
+        key -> LWWRegister(id, register)
+      }
+    )
+  }
+
+  /**
+   * Retrieves the current value map.
+   * Only keys with non-null values are included.
+   */
+  def value: Map[String, T] =
+    data.collect {
+      case (key, register) if register.value.isDefined =>
+        key -> register.value.get
+    }
+
+  /**
+   * Retrieves the current state map.
+   */
+  def state: Map[String, (String, Long, Option[T])] =
+    data.map { case (key, register) =>
+      key -> register.state
+    }
+
+  /**
+   * Checks if a key exists and its value is not null.
+   */
+  def has(key: String): Boolean =
+    data.get(key).exists(_.value.isDefined)
+
+  /**
+   * Retrieves the value for a given key, if it exists.
+   */
+  def get(key: String): Option[T] =
+    data.get(key).flatMap(_.value)
+
+  /**
+   * Adds or updates a key with a new value, returning a new LWWMap.
+   */
+  def set(key: String, value: T): LWWMap[T] = {
+    val updatedData = data.get(key) match {
+      case Some(register) => data.updated(key, register.set(Some(value)))
+      case None           => data.updated(key, LWWRegister(id, (id, 1L, Some(value))))
+    }
+    copy(data = updatedData)
+  }
+
+  /**
+   * Deletes a key by setting its value to null, returning a new LWWMap.
+   */
+  def delete(key: String): LWWMap[T] =
+    data.get(key) match {
+      case Some(register) =>
+        copy(data = data.updated(key, register.set(None)))
+      case None =>
+        this // No change if the key doesn't exist
+    }
+
+  /**
+   * Merges the current LWWMap with a new state, returning a new LWWMap.
+   */
+  def merge(state: Map[String, (String, Long, Option[T])]): LWWMap[T] = {
+    val mergedData = state.foldLeft(data) {
+      case (currentData, (key, remoteState)) =>
+        currentData.get(key) match {
+          case Some(localRegister) =>
+            currentData.updated(key, localRegister.merge(remoteState))
+          case None =>
+            currentData.updated(key, LWWRegister(id, remoteState))
+        }
+    }
+    copy(data = mergedData)
+  }
+}
+```
