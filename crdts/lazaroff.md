@@ -291,9 +291,12 @@ NOTE: I added comments based on the original article's explanations to the indiv
 
 ```
 case class LWWMap[T](id: String, private val data: Map[String, LWWRegister[Option[T]]]) {
-
+   
   /**
    * Constructs an `LWWMap` from an ID and an initial state.
+   * ARTICLE: To instantiate a LWW Map with 
+   * preexisting state, we need to iterate through the 
+   * state and instantiate each LWW Register.
    */
   def this(id: String, state: Map[String, (String, Long, Option[T])]) = {
     this(
@@ -307,6 +310,7 @@ case class LWWMap[T](id: String, private val data: Map[String, LWWRegister[Optio
   /**
    * Retrieves the current value map.
    * Only keys with non-null values are included.
+   * ARTICLE: It’s a getter that iterates through the keys * and gets each register’s value. As far as the rest of * the app is concerned, it’s just normal map!
    */
   def value: Map[String, T] =
     data.collect {
@@ -316,11 +320,15 @@ case class LWWMap[T](id: String, private val data: Map[String, LWWRegister[Optio
 
   /**
    * Retrieves the current state map.
+   * ARTICLE: Similar to value, it’s a getter that builds up a map from each register’s state.
+   * There’s a clear trend here: iterating through the keys in #data and handing things off to the register stored at that key
    */
   def state: Map[String, (String, Long, Option[T])] =
     data.map { case (key, register) =>
       key -> register.state
     }
+
+  // ARTICLE: In addition to the CRDT methods, we need to implement methods more commonly found on maps: set, get, delete and has.
 
   /**
    * Checks if a key exists and its value is not null.
@@ -330,6 +338,8 @@ case class LWWMap[T](id: String, private val data: Map[String, LWWRegister[Optio
 
   /**
    * Retrieves the value for a given key, if it exists.
+   * ARTICLE: Why coalesce to undefined [compare: Option]? 
+   * Because each register holds T | null [once again: TS].
    */
   def get(key: String): Option[T] =
     data.get(key).flatMap(_.value)
@@ -347,6 +357,9 @@ case class LWWMap[T](id: String, private val data: Map[String, LWWRegister[Optio
 
   /**
    * Deletes a key by setting its value to null, returning a new LWWMap.
+   * ARTICLE: Rather than fully removing the key from the map, we set the register value to null. 
+   * The metadata is kept around so we can disambiguate deletions from states that simply don’t have a key yet. 
+   * These are called tombstones — the ghosts of CRDTs past.
    */
   def delete(key: String): LWWMap[T] =
     data.get(key) match {
@@ -358,6 +371,14 @@ case class LWWMap[T](id: String, private val data: Map[String, LWWRegister[Optio
 
   /**
    * Merges the current LWWMap with a new state, returning a new LWWMap.
+   * ARTICLE: First, we iterate through the incoming state parameter rather than the 
+   * local #data. That’s because if the incoming state is missing a key that #data has, 
+   * we know that we don’t need to touch that key.
+   *
+   * For each key in the incoming state, we get the local register at that key. 
+   * If we find one, the peer is updating an existing key that we already know about, 
+   * so we call that register’s merge method with the incoming state at that key. 
+   * Otherwise, the peer has added a new key to the map, so we instantiate a new LWW Register using the incoming state at that key.
    */
   def merge(state: Map[String, (String, Long, Option[T])]): LWWMap[T] = {
     val mergedData = state.foldLeft(data) {
@@ -373,3 +394,11 @@ case class LWWMap[T](id: String, private val data: Map[String, LWWRegister[Optio
   }
 }
 ```
+
+**Article:**
+
+Notice how we never remove deleted keys from the map. 
+This is one drawback to CRDTs — we can **only ever add information, not remove it.** 
+Although from the application’s perspective the key has been fully deleted, 
+the underlying state still records that the key was once there. 
+In technical terms, we say that **CRDTs are monotonically increasing data structures.**
